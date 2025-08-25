@@ -38,9 +38,11 @@ class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     permission_classes = (AllowAny,)
     serializer_class = RegisterSerializer
+    throttle_scope = 'register'
 
 class LoginView(APIView):
     permission_classes = (AllowAny,)
+    throttle_scope = 'login'
 
     def post(self, request, *args, **kwargs):
         serializer = LoginSerializer(data=request.data, context={'request': request})
