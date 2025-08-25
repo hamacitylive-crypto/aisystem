@@ -259,12 +259,23 @@ class AdminDashboardView(APIView):
             .annotate(count=Count('id')) \
             .order_by('date')
 
+        # Question type distribution
+        question_type_distribution = Question.objects.values('type') \
+            .annotate(count=Count('type')) \
+            .order_by('type')
+
+        # Recent users
+        recent_users = User.objects.order_by('-date_joined')[:5]
+        recent_users_serializer = UserSerializer(recent_users, many=True)
+
         dashboard_data = {
             "total_users": total_users,
             "total_questions": total_questions,
             "ai_generated_questions": Question.objects.filter(is_generated=True).count(),
             "manual_questions": Question.objects.filter(is_generated=False).count(),
-            "registration_trends": list(registration_trends)
+            "registration_trends": list(registration_trends),
+            "question_type_distribution": list(question_type_distribution),
+            "recent_users": recent_users_serializer.data,
         }
         return Response(dashboard_data)
 
