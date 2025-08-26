@@ -1,173 +1,128 @@
 import { User } from '../types';
 
-const USERS_KEY = 'examAppUsers';
-const SESSION_KEY = 'examAppSession';
+const API_BASE_URL = 'http://127.0.0.1:8000/api';
 
-// Simple in-memory hash for demonstration. In a real app, use a proper library like bcrypt.
-const simpleHash = (str: string): string => {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash |= 0; // Convert to 32bit integer
-  }
-  return hash.toString();
-};
+// --- Helper Functions ---
 
-type StoredUser = User & { passwordHash: string };
+// A helper to handle fetch requests, credentials, and error handling
+async function fetchApi<T>(url: string, options: RequestInit = {}): Promise<T> {
+  // Ensure credentials are included for session management
+  options.credentials = 'include';
 
-const DEMO_ACCOUNTS = {
-    admin: { email: 'admin@demo.com', password: 'password123', role: 'admin' as 'admin' | 'user', joinDate: '2024-01-01T12:00:00.000Z' },
-    student: { email: 'student@demo.com', password: 'password123', role: 'user' as 'admin' | 'user', joinDate: '2024-01-01T12:00:00.000Z' },
-};
+  // Set headers for JSON content type
+  options.headers = {
+    ...options.headers,
+    'Content-Type': 'application/json',
+  };
 
-export const getDemoCredentials = () => {
-    return [DEMO_ACCOUNTS.admin, DEMO_ACCOUNTS.student];
-};
+  const response = await fetch(`${API_BASE_URL}${url}`, options);
 
-const saveUsers = (users: Record<string, any>): void => {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
-};
-
-const initializeUsers = () => {
+  if (!response.ok) {
+    let errorData;
     try {
-        const usersRaw = localStorage.getItem(USERS_KEY);
-        if (!usersRaw || Object.keys(JSON.parse(usersRaw)).length === 0) {
-            const initialUsers: Record<string, StoredUser> = {};
-
-            const admin = DEMO_ACCOUNTS.admin;
-            initialUsers[admin.email] = {
-                id: 'demo-admin-id',
-                email: admin.email,
-                role: admin.role,
-                joinDate: admin.joinDate,
-                passwordHash: simpleHash(admin.password),
-            };
-
-            const student = DEMO_ACCOUNTS.student;
-            initialUsers[student.email] = {
-                id: 'demo-student-id',
-                email: student.email,
-                role: student.role,
-                joinDate: student.joinDate,
-                passwordHash: simpleHash(student.password),
-            };
-            saveUsers(initialUsers);
-        }
+        errorData = await response.json();
     } catch (e) {
-        console.error("Error initializing users, re-seeding.", e);
-        // Fallback to re-seeding if parsing fails
-        const fallbackUsers: Record<string, StoredUser> = {};
-        const admin = DEMO_ACCOUNTS.admin;
-        fallbackUsers[admin.email] = { id: 'demo-admin-id', email: admin.email, role: admin.role, joinDate: admin.joinDate, passwordHash: simpleHash(admin.password) };
-        const student = DEMO_ACCOUNTS.student;
-        fallbackUsers[student.email] = { id: 'demo-student-id', email: student.email, role: student.role, joinDate: student.joinDate, passwordHash: simpleHash(student.password) };
-        saveUsers(fallbackUsers);
+        errorData = { detail: `An unknown error occurred (status: ${response.status})` };
     }
-};
-
-// Run initialization once when the module is loaded
-initializeUsers();
-
-
-const getUsers = (): Record<string, StoredUser> => {
-  try {
-    const users = localStorage.getItem(USERS_KEY);
-    return users ? JSON.parse(users) : {};
-  } catch (error) {
-    return {};
+    // Use the 'detail' field from DRF or a generic message
+    throw new Error(errorData.detail || Object.values(errorData).join(' '));
   }
-};
 
-export const register = async (email: string, password: string, role: 'admin' | 'user'): Promise<User> => {
-    return new Promise((resolve, reject) => {
-        setTimeout(() => { // Simulate network delay
-            const users = getUsers();
-            if (users[email]) {
-                return reject(new Error('هذا البريد الإلكتروني مسجل بالفعل.'));
-            }
+  // For 204 No Content, return a specific success indicator
+  if (response.status === 204) {
+      return { success: true } as T;
+  }
 
-            const passwordHash = simpleHash(password);
-            const id = new Date().toISOString() + Math.random();
-            
-            const newUser: User = { id, email, role, joinDate: new Date().toISOString() };
-            
-            users[email] = { ...newUser, passwordHash };
-            saveUsers(users);
+  return response.json() as T;
+}
 
-            localStorage.setItem(SESSION_KEY, JSON.stringify(newUser));
-            resolve(newUser);
-        }, 500);
+// Helper to convert snake_case from backend to camelCase for frontend
+function toCamelCase(obj: any): any {
+    if (Array.isArray(obj)) {
+        return obj.map(v => toCamelCase(v));
+    } else if (obj !== null && obj.constructor === Object) {
+        return Object.keys(obj).reduce((result, key) => {
+            const camelKey = key.replace(/([-_][a-z])/g, (group) => group.toUpperCase().replace('-', '').replace('_', ''));
+            result[camelKey] = toCamelCase(obj[key]);
+            return result;
+        }, {} as any);
+    }
+    return obj;
+}
+
+
+// --- Authentication Functions ---
+
+export const register = async (email: string, password: string): Promise<User> => {
+    // The backend expects a `username`. We'll use the email as the username.
+    const response = await fetchApi<any>('/auth/register/', {
+        method: 'POST',
+        body: JSON.stringify({
+            username: email,
+            email: email,
+            password: password,
+            first_name: '', // Optional fields
+            last_name: ''   // Optional fields
+        }),
     });
+    return toCamelCase(response) as User;
 };
-
 
 export const login = async (email: string, password: string): Promise<User> => {
-     return new Promise((resolve, reject) => {
-        setTimeout(() => { // Simulate network delay
-            const users = getUsers();
-            const userRecord = users[email];
-
-            if (!userRecord) {
-                return reject(new Error('البريد الإلكتروني أو كلمة المرور غير صحيحة.'));
-            }
-
-            const passwordHash = simpleHash(password);
-            if (userRecord.passwordHash !== passwordHash) {
-                return reject(new Error('البريد الإلكتروني أو كلمة المرور غير صحيحة.'));
-            }
-            
-            const user: User = { id: userRecord.id, email: userRecord.email, role: userRecord.role, joinDate: userRecord.joinDate };
-            localStorage.setItem(SESSION_KEY, JSON.stringify(user));
-            resolve(user);
-        }, 500);
+    // Backend's LoginSerializer expects `username` and `password`.
+    const response = await fetchApi<any>('/auth/login/', {
+        method: 'POST',
+        body: JSON.stringify({ username: email, password }),
     });
+    return toCamelCase(response) as User;
 };
 
-export const logout = (): void => {
-  localStorage.removeItem(SESSION_KEY);
+export const logout = async (): Promise<void> => {
+    await fetchApi('/auth/logout/', { method: 'POST' });
+    // No return value needed, the helper handles errors.
 };
 
-export const getCurrentUser = (): User | null => {
-  try {
-    const session = localStorage.getItem(SESSION_KEY);
-    return session ? JSON.parse(session) : null;
-  } catch (error) {
-    return null;
-  }
-};
-
-export const getUserCount = (): number => {
-    const users = getUsers();
-    return Object.keys(users).length;
-};
-
-// Admin functions
-export const getAllUsers = (): User[] => {
-    const users = getUsers();
-    return Object.values(users).map(({ passwordHash, ...user }) => user);
-};
-
-export const updateUser = (userId: string, updates: Partial<User>): User | null => {
-    const users = getUsers();
-    const userEmail = Object.keys(users).find(email => users[email].id === userId);
-    if (userEmail && users[userEmail]) {
-        const updatedUser = { ...users[userEmail], ...updates };
-        users[userEmail] = updatedUser;
-        saveUsers(users);
-        const { passwordHash, ...user } = updatedUser;
-        return user;
+export const getCurrentUser = async (): Promise<User | null> => {
+    try {
+        const response = await fetchApi<any>('/auth/user/');
+        return toCamelCase(response) as User;
+    } catch (error) {
+        // A 401/403 error from the backend means no user is logged in.
+        console.log("Not logged in, or session expired.");
+        return null;
     }
-    return null;
 };
 
-export const deleteUser = (userId: string): boolean => {
-    const users = getUsers();
-    const userEmail = Object.keys(users).find(email => users[email].id === userId);
-    if (userEmail) {
-        delete users[userEmail];
-        saveUsers(users);
-        return true;
-    }
-    return false;
+
+// --- Admin Functions ---
+
+export const getAllUsers = async (): Promise<User[]> => {
+    const response = await fetchApi<any[]>('/admin/users/');
+    return toCamelCase(response) as User[];
 };
+
+export const updateUser = async (userId: string, updates: Partial<User>): Promise<User> => {
+    // Note: The backend expects snake_case for the role if it's being updated.
+    // For this simple case, we assume the frontend sends a valid update object.
+    // A more robust solution would convert camelCase updates to snake_case here.
+    const response = await fetchApi<any>(`/admin/users/${userId}/`, {
+        method: 'PUT',
+        body: JSON.stringify(updates),
+    });
+    return toCamelCase(response) as User;
+};
+
+export const deleteUser = async (userId: string): Promise<void> => {
+    await fetchApi(`/admin/users/${userId}/`, { method: 'DELETE' });
+};
+
+// --- Mock/Demo Functions (Kept for UI compatibility, but do nothing) ---
+// These can be removed if the UI components that use them are also updated.
+export const getDemoCredentials = () => {
+    return [];
+};
+
+export const getUserCount = async (): Promise<number> => {
+    const users = await getAllUsers();
+    return users.length;
+}
